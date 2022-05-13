@@ -6,7 +6,7 @@ Fixed the bug of GPU allocation for distributed training
 
 Thanks to [@haohaolalahao](https://github.com/haohaolalahao) for fixing these bugs.
 
-感谢[@haohaolalahao]解决了(https://github.com/haohaolalahao)DCNv2在torch1.10分布式训练时GPU ID分配bug和显存溢出bug。
+感谢[@haohaolalahao](https://github.com/haohaolalahao)解决了DCNv2在torch1.10分布式训练时GPU ID分配bug和显存溢出bug。
 该版本DCNv2支持torch1.10和1.11的分布式训练，支持AMP混合精度训练 和 ONNX转换
 
 ### Build
