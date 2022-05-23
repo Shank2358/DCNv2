@@ -17,7 +17,7 @@ def get_extensions():
     main_file = glob.glob(os.path.join(extensions_dir, "*.cpp"))
     source_cpu = glob.glob(os.path.join(extensions_dir, "cpu", "*.cpp"))
     source_cuda = glob.glob(os.path.join(extensions_dir, "cuda", "*.cu"))
-    os.environ["CC"] = "g++"
+    os.environ["CC"] = "g++-10"
     sources = main_file + source_cpu
     extension = CppExtension
     extra_compile_args = {"cxx": []}
