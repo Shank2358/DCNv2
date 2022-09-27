@@ -253,16 +253,16 @@ def example_mdpooling():
 if __name__ == '__main__':
 
     example_dconv()
-    example_dpooling()
-    example_mdpooling()
+    # example_dpooling()
+    # example_mdpooling()
 
-    check_pooling_zero_offset()
+    # check_pooling_zero_offset()
     # zero offset check
-    if inC == outC:
-        check_zero_offset()
+    # if inC == outC:
+    #     check_zero_offset()
 
-    check_gradient_dpooling()
-    check_gradient_dconv()
+    # check_gradient_dpooling()
+    #check_gradient_dconv()
     # """
     # ****** Note: backward is not reentrant error may not be a serious problem,
     # ****** since the max error is less than 1e-7,

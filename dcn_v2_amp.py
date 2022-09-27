@@ -181,6 +181,220 @@ class DCNv2(nn.Module):
         )
 
 
+class DCNv2_Circle(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride,
+        padding,
+        dilation=1,
+        deformable_groups=1,
+    ):
+        super(DCNv2_Circle, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = _pair(kernel_size)
+        self.stride = _pair(stride)
+        self.padding = _pair(padding)
+        self.dilation = _pair(dilation)
+        self.deformable_groups = deformable_groups
+
+        self.weight = nn.Parameter(
+            torch.Tensor(out_channels, in_channels, *self.kernel_size)
+        )
+
+        self.bias = nn.Parameter(torch.Tensor(out_channels))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        n = self.in_channels
+        for k in self.kernel_size:
+            n *= k
+        stdv = 1.0 / math.sqrt(n)
+        self.weight.data.uniform_(-stdv, stdv)
+        self.bias.data.zero_()
+
+    def forward(self, input, offset, mask):
+        assert (
+            2 * self.deformable_groups * self.kernel_size[0] * self.kernel_size[1]
+            == offset.shape[1]
+        )
+        assert (
+            self.deformable_groups * self.kernel_size[0] * self.kernel_size[1]
+            == mask.shape[1]
+        )
+
+        shape = self.weight.shape
+        weight_reshape = self.weight.view(shape[0], shape[1], -1)
+
+        f0 = math.sqrt(2) / 2 * weight_reshape[:, :, 0:1] + (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 1:2]
+        f1 = math.sqrt(2) / 2 * weight_reshape[:, :, 3:4] + (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 4:5]
+        w0 = math.sqrt(2) / 2 * f0 + (1 - math.sqrt(2) / 2) * f1
+
+        f2 = (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 1:2] + math.sqrt(2) / 2 * weight_reshape[:, :, 2:3]
+        f3 = (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 4:5] + math.sqrt(2) / 2 * weight_reshape[:, :, 5:6]
+        w2 = math.sqrt(2) / 2 * f2 + (1 - math.sqrt(2) / 2) * f3
+
+        f4 = math.sqrt(2) / 2 * weight_reshape[:, :, 3:4] + (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 4:5]
+        f5 = math.sqrt(2) / 2 * weight_reshape[:, :, 6:7] + (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 7:8]
+        w6 = (1 - math.sqrt(2) / 2) * f4 + math.sqrt(2) / 2 * f5
+
+        f6 = (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 4:5] + math.sqrt(2) / 2 * weight_reshape[:, :, 5:6]
+        f7 = (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 7:8] + math.sqrt(2) / 2 * weight_reshape[:, :, 8:9]
+        w8 = (1 - math.sqrt(2) / 2) * f6 + math.sqrt(2) / 2 * f7
+
+        self.weight_circle = nn.Parameter(torch.cat([w0, weight_reshape[:, :, 1:2], w2,
+                                        weight_reshape[:, :, 3:4], weight_reshape[:, :, 4:5], weight_reshape[:, :, 5:6],
+                                        w6, weight_reshape[:, :, 7:8], w8], dim=-1).view(shape).contiguous())
+
+        return dcn_v2_conv(
+            input,
+            offset,
+            mask,
+            self.weight_circle,
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.deformable_groups,
+        )
+class route_func(nn.Module):
+    def __init__(self, c_in, num_experts=1):
+        super(route_func, self).__init__()
+        self.avgpool = nn.AdaptiveAvgPool2d(output_size=1)
+        self.fc = nn.Linear(c_in, num_experts)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x = self.avgpool(x)
+
+        x = x.view(x.size(0), -1)
+        x = x.sum(dim=0, keepdim=True)
+        x = self.fc(x)
+        x = self.sigmoid(x)
+        return x
+class DCNv2_Circle8(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride,
+        padding,
+        dilation=1,
+        deformable_groups=1,
+    ):
+        super(DCNv2_Circle8, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = _pair(kernel_size)
+        self.stride = _pair(stride)
+        self.padding = _pair(padding)
+        self.dilation = _pair(dilation)
+        self.deformable_groups = deformable_groups
+        
+        self.avgpool = nn.AdaptiveAvgPool2d(output_size=1)
+        self.fc = nn.Linear(in_channels, 4)
+        self.sigmoid = nn.Sigmoid()
+        #self.__routef = route_func(in_channels, num_experts=4)
+        
+        self.weight = nn.Parameter(
+            torch.Tensor(out_channels, in_channels, *self.kernel_size)
+        )
+
+        self.bias = nn.Parameter(torch.Tensor(out_channels*8))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        n = self.in_channels
+        for k in self.kernel_size:
+            n *= k
+        stdv = 1.0 / math.sqrt(n)
+        self.weight.data.uniform_(-stdv, stdv)
+        self.bias.data.zero_()
+
+    def forward(self, input, offset, mask, w_c8):
+        assert (
+            2 * self.deformable_groups * self.kernel_size[0] * self.kernel_size[1]
+            == offset.shape[1]
+        )
+        assert (
+            self.deformable_groups * self.kernel_size[0] * self.kernel_size[1]
+            == mask.shape[1]
+        )
+
+        shape = self.weight.shape
+        weight_reshape = self.weight.view(shape[0], shape[1], -1)
+
+        f0 = math.sqrt(2) / 2 * weight_reshape[:, :, 0:1] + (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 1:2]
+        f1 = math.sqrt(2) / 2 * weight_reshape[:, :, 3:4] + (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 4:5]
+        w0 = math.sqrt(2) / 2 * f0 + (1 - math.sqrt(2) / 2) * f1
+
+        f2 = (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 1:2] + math.sqrt(2) / 2 * weight_reshape[:, :, 2:3]
+        f3 = (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 4:5] + math.sqrt(2) / 2 * weight_reshape[:, :, 5:6]
+        w2 = math.sqrt(2) / 2 * f2 + (1 - math.sqrt(2) / 2) * f3
+
+        f4 = math.sqrt(2) / 2 * weight_reshape[:, :, 3:4] + (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 4:5]
+        f5 = math.sqrt(2) / 2 * weight_reshape[:, :, 6:7] + (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 7:8]
+        w6 = (1 - math.sqrt(2) / 2) * f4 + math.sqrt(2) / 2 * f5
+
+        f6 = (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 4:5] + math.sqrt(2) / 2 * weight_reshape[:, :, 5:6]
+        f7 = (1 - math.sqrt(2) / 2) * weight_reshape[:, :, 7:8] + math.sqrt(2) / 2 * weight_reshape[:, :, 8:9]
+        w8 = (1 - math.sqrt(2) / 2) * f6 + math.sqrt(2) / 2 * f7
+
+        weight_c_base = torch.cat([w0, weight_reshape[:, :, 1:2], w2,
+                   weight_reshape[:, :, 3:4], weight_reshape[:, :, 4:5], weight_reshape[:, :, 5:6],
+                   w6, weight_reshape[:, :, 7:8], w8], dim=-1)
+
+        #r = self.__routef(input)
+        r = self.avgpool(input)
+        r = r.view(r.size(0), -1)
+        r = r.sum(dim=0, keepdim=True)
+        r = self.fc(r)
+        r = self.sigmoid(r)
+        #print(routef.shape)
+
+        weight_c0 = weight_c_base.view(shape) * r[0,0] + self.weight * (1-r[0,0])
+        weight_c1 = weight_c_base[:, :, [3, 0, 1, 6, 4, 2, 7, 8, 5]].view(shape)
+        weight_c2 = weight_c_base[:, :, [6, 3, 0, 7, 4, 1, 8, 5, 2]].view(shape) * r[0,1] + weight_reshape[:, :, [6, 3, 0, 7, 4, 1, 8, 5, 2]].view(shape) * (1-r[0,1])
+        weight_c3 = weight_c_base[:, :, [7, 6, 3, 8, 4, 0, 5, 2, 1]].view(shape)
+        weight_c4 = weight_c_base[:, :, [8, 7, 6, 5, 4, 3, 2, 1, 0]].view(shape) * r[0,2] + weight_reshape[:, :, [8, 7, 6, 5, 4, 3, 2, 1, 0]].view(shape) * (1-r[0,2])
+        weight_c5 = weight_c_base[:, :, [5, 8, 7, 2, 4, 6, 1, 0, 3]].view(shape)
+        weight_c6 = weight_c_base[:, :, [2, 5, 8, 1, 4, 7, 0, 3, 6]].view(shape) * r[0,3] + weight_reshape[:, :, [2, 5, 8, 1, 4, 7, 0, 3, 6]].view(shape) * (1-r[0,3])
+        weight_c7 = weight_c_base[:, :, [1, 2, 5, 0, 4, 8, 3, 6, 7]].view(shape)
+        weight_circle = torch.cat([weight_c0, weight_c1, weight_c2, weight_c3, weight_c4, weight_c5, weight_c6, weight_c7], dim=0).contiguous()#.detach()
+        #print(self.weight_circle.shape, input.shape)
+        '''
+        self.combined_weight1 = self.combined_weight
+        self.combined_bias1 = self.combined_bias
+        offset1 = offset
+        mask1 = mask
+        for i in range(b-1):
+            self.combined_weight1 = torch.cat([self.combined_weight1, self.combined_weight], dim=1)
+            self.combined_bias1 = torch.cat([self.combined_bias1, self.combined_bias], dim=0)
+            offset1 = torch.cat([offset1, offset], dim=1)
+            mask1 = torch.cat([mask1, mask], dim=1)
+        '''
+        result8 = dcn_v2_conv(
+            input,
+            offset,
+            mask,
+            weight_circle,
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.deformable_groups,
+        )
+        b, c_iout, h, w = result8.size()
+        #print(w_c8.shape)
+        result8 = result8.view(b, 8, self.out_channels, h, w) * w_c8.unsqueeze(2)# ##w_c8: [b, 8, H, W]
+        #torch.mean(result8[:, 8:9, :, :, :], dim=1)
+        return torch.sum(result8, dim=1)
+
+
 class DCN(DCNv2):
     def __init__(
         self,
